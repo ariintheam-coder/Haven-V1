@@ -183,21 +183,7 @@ nav h1 {
 .grid-cols-2 {
     grid-template-columns: repeat(2, 1fr);
 }
-.sm\:grid-cols-4 {
-    grid-template-columns: repeat(4, 1fr);
-}
-.md\:grid-cols-7 {
-    grid-template-columns: repeat(7, 1fr);
-}
-.md\:grid-cols-3 {
-    grid-template-columns: repeat(3, 1fr);
-}
-.md\:grid-cols-2 {
-    grid-template-columns: repeat(2, 1fr);
-}
-.lg\:grid-cols-3 {
-    grid-template-columns: repeat(3, 1fr);
-}
+
 .gap-3 {
     gap: 0.75rem;
 }
@@ -1367,6 +1353,10 @@ html { scroll-behavior: smooth; }
                         </div>
                     </div>
                     <div class="grid md:grid-cols-2 gap-4">
+                        <button class="btn-success w-full text-sm" title="Spend 20 Energy. Train Strength, Defense, Speed, and Evasion; each session drains up to 5 Glory." onclick="trainAllStats()">
+                            <div class="font-bold">🏋️ Train All Stats</div>
+                            <div class="text-xs text-gray-200">Cost: 20 Energy | Lose up to 20 Glory</div>
+                        </button>
                         <button class="btn-primary w-full text-sm" title="Spend 5 Energy. Training drains up to 5 Glory; your remaining Glory determines the Strength gain." onclick="trainStat('STR')">
                             <div class="font-bold">💪 Strength Training</div>
                             <div class="text-xs text-gray-200">Cost: 5 Energy | Lose up to 5 Glory | Gain: 1–3 STR</div>
@@ -1538,10 +1528,10 @@ html { scroll-behavior: smooth; }
 </div>
 
     <!-- Merit Shop Modal -->
-    <div id="meritShopBackdrop"></div>
-    <div id="meritShopModal">
-        <button class="btn-danger mb-4" onclick="hideMeritShop()">Close</button>
-        <h2>💚 Merit Shop</h2>
+    <div id="meritShopBackdrop" aria-hidden="true" onclick="hideMeritShop()"></div>
+    <div id="meritShopModal" role="dialog" aria-modal="true" aria-labelledby="meritShopTitle">
+        <button class="btn-danger mb-4" type="button" onclick="hideMeritShop()">Close</button>
+        <h2 id="meritShopTitle">💚 Merit Shop</h2>
         <div class="flex justify-between items-center mb-6">
             <p class="text-gray-400 font-semibold">Spend your merits on powerful upgrades and permanent boosts!</p>
             <div class="text-2xl font-black text-green-400">💚 <span id="meritShopBalanceModal">50</span></div>
@@ -1722,6 +1712,11 @@ html { scroll-behavior: smooth; }
             document.getElementById('beginAdventureBtn').addEventListener('click', closeWelcomeModal);
             document.getElementById('playerMeritsContainer').addEventListener('click', () => {
                 showMeritShop();
+            });
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && meritShopModal.classList.contains('show')) {
+                    hideMeritShop();
+                }
             });
         }
 
@@ -1928,6 +1923,7 @@ html { scroll-behavior: smooth; }
                 char[key] = Number.isFinite(number) ? number : value;
             });
             char.level = Math.max(1, Math.floor(char.level));
+            char.exp = Math.max(0, char.exp);
             char.maxHp = Math.max(1, char.maxHp);
             char.maxEnergy = Math.max(1, char.maxEnergy);
             char.maxGlory = Math.max(1, char.maxGlory);
@@ -2648,6 +2644,10 @@ html { scroll-behavior: smooth; }
                 showNotification('Finish or leave your dungeon encounter before starting combat.');
                 return;
             }
+            if (char.hp <= 0) {
+                showNotification('Recover your health before starting combat.');
+                return;
+            }
             if (char.energy < 15) {
                 showNotification('Not enough energy!');
                 return;
@@ -2705,7 +2705,9 @@ html { scroll-behavior: smooth; }
             addCombatLog('You take a defensive stance!', 'info');
             setTimeout(() => {
                 if (!combatActive) return;
-                const damage = Math.floor(Math.random() * 8) + 2;
+                const defense = getEffectiveStat('def') || 12;
+                const incomingDamage = Math.max(1, Math.floor(Math.random() * 15) + 5 + combatEnemyDamageBonus - Math.floor(Math.max(0, defense - 12) / 6));
+                const damage = Math.max(1, Math.floor(incomingDamage * 0.45));
                 const playerHP = parseInt(document.getElementById('playerCombatHP').textContent, 10);
                 const newPlayerHP = Math.max(0, playerHP - damage);
                 getMetaStats().damageTaken += playerHP - newPlayerHP;
@@ -3054,9 +3056,45 @@ html { scroll-behavior: smooth; }
             showNotification('Defeated in the dungeon — no floor rewards were earned.');
         }
 
+        function trainAllStats() {
+            const char = gameState.currentCharacter;
+            if (!char) return;
+            if (combatActive || activeDungeon) {
+                showNotification('You cannot train during an active fight.');
+                return;
+            }
+            if (char.energy < 20) {
+                showNotification('Training all stats costs 20 Energy.');
+                return;
+            }
+
+            char.energy -= 20;
+            const stats = ['STR', 'DEF', 'SPD', 'EVA'];
+            const gains = {};
+            stats.forEach((stat) => {
+                const gloryDrain = Math.min(5, Math.max(0, Number(char.glory) || 0));
+                char.glory = Math.max(0, char.glory - 5);
+                const maxGlory = Math.max(1, Number(char.maxGlory) || 1);
+                const gain = Math.max(1, Math.ceil((char.glory / maxGlory) * 3));
+                char.stats[stat.toLowerCase()] += gain;
+                gains[stat] = gain;
+            });
+
+            const meta = getMetaStats();
+            if (meta) meta.trainingSessions += stats.length;
+            advanceStoryQuest('training');
+            advanceRankQuests('training', stats.length);
+            loadCharacterUI();
+            showNotification(`All stats trained! STR +${gains.STR}, DEF +${gains.DEF}, SPD +${gains.SPD}, EVA +${gains.EVA}.`);
+        }
+
         function trainStat(stat) {
     const char = gameState.currentCharacter;
     if (!char) return;
+    if (combatActive || activeDungeon) {
+        showNotification('You cannot train during an active fight.');
+        return;
+    }
     if (char.energy < 5) {
         showNotification('Training costs 5 Energy.');
         return;
@@ -3155,6 +3193,10 @@ html { scroll-behavior: smooth; }
             const char = gameState.currentCharacter;
             const item = marketCatalog.find((entry) => entry.name === itemName);
             if (!char || !item) return;
+            if (combatActive || activeDungeon) {
+                showNotification('You cannot shop during an active fight.');
+                return;
+            }
             if ((Number(char.level) || 1) < item.level) {
                 showNotification(`${item.name} unlocks at level ${item.level}.`);
                 return;
@@ -3303,16 +3345,21 @@ html { scroll-behavior: smooth; }
         }
 
         function logout() {
-            gameState.currentUser = 'localPlayer';
+            gameState.currentUser = null;
             gameState.currentCharacter = null;
+            gameState.characters = {};
             combatActive = false;
             combatTurnPending = false;
             activeDungeon = null;
-            gameState.users[gameState.currentUser] = gameState.users[gameState.currentUser] || { characters: {} };
-            gameState.characters = gameState.users[gameState.currentUser].characters || {};
             document.getElementById('gameContainer').classList.add('hidden');
-            document.getElementById('authContainer').classList.add('hidden');
-            showCharacterSelection();
+            document.getElementById('charSelectContainer').classList.add('hidden');
+            document.getElementById('welcomeModal').classList.add('hidden');
+            hideMeritShop();
+            document.getElementById('loginForm').classList.remove('hidden');
+            document.getElementById('registerForm').classList.add('hidden');
+            document.getElementById('loginError').classList.add('hidden');
+            document.getElementById('registerError').classList.add('hidden');
+            document.getElementById('authContainer').classList.remove('hidden');
         }
 
         function updateTime() {
